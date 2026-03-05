@@ -1,18 +1,11 @@
 """
 Type definitions for CQRS framework.
 
-This module contains common type variables used throughout the framework.
-It is placed at the bottom of the dependency hierarchy to avoid circular imports.
+This module re-exports common type variables (ReqT, ResT) from
+cqrs.requests.request for backward compatibility. Defining ReqT/ResT in
+request.py avoids circular import with request_handler.
 """
 
-import typing
+from cqrs.requests.request import ReqT, ResT
 
-from cqrs.requests.request import Request
-from cqrs.response import Response
-
-# Type variable for request types (contravariant - can accept subtypes)
-ReqT = typing.TypeVar("ReqT", bound=Request, contravariant=True)
-
-# Type variable for response types (covariant - can return subtypes)
-# Can be Response or None
-ResT = typing.TypeVar("ResT", bound=Response | None, covariant=True)
+__all__ = ("ReqT", "ResT")

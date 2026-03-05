@@ -89,6 +89,8 @@ WHAT THIS EXAMPLE DEMONSTRATES
    - Saga state and execution history are persisted to SagaStorage
 
 3. Saga Storage and Logging:
+   - MemorySagaStorage/SqlAlchemySagaStorage support create_run(): one session per saga,
+     checkpoint commits (fewer commits, better performance)
    - SagaStorage persists saga state and execution history
    - Each step execution is logged (act/compensate, status, timestamp)
    - Storage enables recovery of interrupted sagas
@@ -291,7 +293,7 @@ class ReserveInventoryStep(
         self._events: list[cqrs.Event] = []
 
     @property
-    def events(self) -> list[cqrs.Event]:
+    def events(self) -> typing.Sequence[cqrs.IEvent]:
         return self._events.copy()
 
     async def act(
@@ -325,7 +327,7 @@ class ProcessPaymentStep(
         self._events: list[cqrs.Event] = []
 
     @property
-    def events(self) -> list[cqrs.Event]:
+    def events(self) -> typing.Sequence[cqrs.IEvent]:
         return self._events.copy()
 
     async def act(
@@ -356,7 +358,7 @@ class ShipOrderStep(SagaStepHandler[OrderContext, ShipOrderResponse]):
         self._events: list[cqrs.Event] = []
 
     @property
-    def events(self) -> list[cqrs.Event]:
+    def events(self) -> typing.Sequence[cqrs.IEvent]:
         return self._events.copy()
 
     async def act(
@@ -400,7 +402,7 @@ class OrderSaga(Saga[OrderContext]):
 # DI Container Setup
 # ============================================================================
 
-# Shared storage instance (in production, use persistent storage)
+# Shared storage (MemorySagaStorage uses create_run(): scoped run, checkpoint commits)
 saga_storage = MemorySagaStorage()
 
 # Setup DI container
@@ -449,9 +451,7 @@ def mediator_factory() -> cqrs.SagaMediator:
 def serialize_response(response: Response | None) -> dict[str, typing.Any]:
     if response is None:
         return {}
-    if isinstance(response, pydantic.BaseModel):
-        return response.model_dump()
-    return {"response": str(response)}
+    return response.to_dict()
 
 
 @app.post("/process-order")

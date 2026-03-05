@@ -158,9 +158,7 @@ def mediator_factory() -> cqrs.EventMediator:
     decoder=empty_message_decoder,
 )
 async def hello_world_event_handler(
-    body: cqrs.NotificationEvent[HelloWorldPayload]
-    | deserializers.DeserializeJsonError
-    | None,
+    body: cqrs.NotificationEvent[HelloWorldPayload] | deserializers.DeserializeJsonError | None,
     msg: kafka.KafkaMessage,
     mediator: cqrs.EventMediator = faststream.Depends(mediator_factory),
 ):
@@ -177,6 +175,6 @@ if __name__ == "__main__":
     )
     print(
         f"1. Run kafka infrastructure with: `docker compose -f ./docker-compose-dev.yml up -d`\n"
-        f"2. Send to kafka topic `hello_world` event: {orjson.dumps(ev.model_dump(mode='json')).decode()}",
+        f"2. Send to kafka topic `hello_world` event: {orjson.dumps(ev.to_dict()).decode()}",
     )
     asyncio.run(app.run())

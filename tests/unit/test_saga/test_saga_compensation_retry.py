@@ -111,8 +111,8 @@ async def test_compensation_retry_uses_exponential_backoff(
         sleep_times.append(delay)
         # Return immediately without actual sleep
 
-    # Patch asyncio.sleep in the saga module where it's used
-    with patch("cqrs.saga.saga.asyncio.sleep", side_effect=mock_sleep):
+    # Patch asyncio.sleep in the compensation module where it's used
+    with patch("cqrs.saga.compensation.asyncio.sleep", side_effect=mock_sleep):
         with pytest.raises(ValueError):
             async with saga.transaction(
                 context=context,
@@ -135,9 +135,7 @@ async def test_compensation_retry_uses_exponential_backoff(
     # Attempt 4 succeeds -> no wait
     expected_delays = [initial_delay * (backoff_multiplier**i) for i in range(3)]
 
-    assert (
-        len(sleep_times) == 3
-    ), f"Expected 3 sleep calls, got {len(sleep_times)}: {sleep_times}"
+    assert len(sleep_times) == 3, f"Expected 3 sleep calls, got {len(sleep_times)}: {sleep_times}"
     for actual, expected in zip(sleep_times, expected_delays):
         assert abs(actual - expected) < 0.01, f"Expected {expected}, got {actual}"
 

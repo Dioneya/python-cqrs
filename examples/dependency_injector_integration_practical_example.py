@@ -68,7 +68,13 @@ import uuid
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Generic, Optional, Self, TypeVar
+import sys
+from typing import Generic, Optional, TypeVar
+
+if sys.version_info >= (3, 11):
+    from typing import Self  # novm
+else:
+    from typing_extensions import Self
 
 import uvicorn
 
@@ -345,9 +351,7 @@ def setup_logging() -> None:
     )
 
     # Add a StreamHandler if none exists
-    has_stream_handler = any(
-        isinstance(h, logging.StreamHandler) for h in root_logger.handlers
-    )
+    has_stream_handler = any(isinstance(h, logging.StreamHandler) for h in root_logger.handlers)
     if not has_stream_handler:
         stream_handler = logging.StreamHandler()
         stream_handler.setLevel(logging.DEBUG)

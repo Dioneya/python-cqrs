@@ -1,17 +1,28 @@
+import datetime
 import logging
 import typing
 
 import dotenv
 import orjson
-import sqlalchemy
-from sqlalchemy import func
-from sqlalchemy.dialects import mysql
-from sqlalchemy.ext.asyncio import session as sql_session
-from sqlalchemy.orm import DeclarativeMeta, registry
-
 import cqrs
+import uuid
 from cqrs import compressors
 from cqrs.outbox import map, repository
+
+try:
+    import sqlalchemy
+
+    from sqlalchemy import func
+    from sqlalchemy.orm import Mapped, mapped_column, DeclarativeMeta, registry
+    from sqlalchemy.ext.asyncio import session as sql_session
+    from sqlalchemy.dialects import postgresql
+except ImportError:
+    raise ImportError(
+        "You are trying to use SQLAlchemy outbox implementation, "
+        "but 'sqlalchemy' is not installed. "
+        "Please install it using: pip install python-cqrs[sqlalchemy]",
+    ) from None
+
 
 Base = registry().generate_base()
 
@@ -24,6 +35,39 @@ DEFAULT_OUTBOX_TABLE_NAME = "outbox"
 MAX_FLUSH_COUNTER_VALUE = 5
 
 
+class BinaryUUID(sqlalchemy.TypeDecorator):
+    """Stores the UUID as a native UUID in Postgres and as BINARY(16) in other databases (MySQL)."""
+
+    impl = sqlalchemy.BINARY(16)
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        if dialect.name == "postgresql":
+            return dialect.type_descriptor(postgresql.UUID())
+        else:
+            return dialect.type_descriptor(sqlalchemy.BINARY(16))
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return value
+        if isinstance(value, str):
+            value = uuid.UUID(value)
+        if dialect.name == "postgresql":
+            return value  # asyncpg works with uuid.UUID
+        if isinstance(value, uuid.UUID):
+            return value.bytes  # For MySQL return 16 bytes
+        return value
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return value
+        if dialect.name == "postgresql":
+            return value  # asyncpg return uuid.UUID
+        if isinstance(value, bytes):
+            return uuid.UUID(bytes=value)  # From MySQL got bytes, make UUID
+        return value
+
+
 class OutboxModel(Base):
     __tablename__ = DEFAULT_OUTBOX_TABLE_NAME
 
@@ -34,64 +78,61 @@ class OutboxModel(Base):
             name="event_id_unique_index",
         ),
     )
-    id = sqlalchemy.Column(
-        sqlalchemy.BigInteger(),
+    id: Mapped[int] = mapped_column(
+        sqlalchemy.BigInteger,
         sqlalchemy.Identity(),
         primary_key=True,
         nullable=False,
         autoincrement=True,
         comment="Identity",
     )
-    event_id = sqlalchemy.Column(
-        sqlalchemy.Uuid,
+    event_id: Mapped[uuid.UUID] = mapped_column(
+        BinaryUUID,
         nullable=False,
         comment="Event idempotency id",
     )
-    event_id_bin = sqlalchemy.Column(
+    event_id_bin: Mapped[bytes] = mapped_column(
         sqlalchemy.BINARY(16),
         nullable=False,
         comment="Event idempotency id in 16 bit presentation",
     )
-    event_status = sqlalchemy.Column(
+    event_status: Mapped[repository.EventStatus] = mapped_column(
         sqlalchemy.Enum(repository.EventStatus),
         nullable=False,
         default=repository.EventStatus.NEW,
         comment="Event producing status",
     )
-    flush_counter = sqlalchemy.Column(
-        sqlalchemy.SmallInteger(),
+    flush_counter: Mapped[int] = mapped_column(
+        sqlalchemy.SmallInteger,
         nullable=False,
         default=0,
         comment="Event producing flush counter",
     )
-    event_name = sqlalchemy.Column(
+    event_name: Mapped[typing.Text] = mapped_column(
         sqlalchemy.String(255),
         nullable=False,
         comment="Event name",
     )
-    topic = sqlalchemy.Column(
+    topic: Mapped[typing.Text] = mapped_column(
         sqlalchemy.String(255),
         nullable=False,
         comment="Event topic",
         default="",
     )
-    created_at = sqlalchemy.Column(
+    created_at: Mapped[datetime.datetime] = mapped_column(
         sqlalchemy.DateTime,
         nullable=False,
         server_default=func.now(),
         comment="Event creation timestamp",
     )
-    payload = sqlalchemy.Column(
-        mysql.BLOB,
+    payload: Mapped[bytes] = mapped_column(
+        sqlalchemy.LargeBinary,
         nullable=False,
-        default={},
         comment="Event payload",
     )
 
     def row_to_dict(self) -> typing.Dict[typing.Text, typing.Any]:
-        return {
-            column.name: getattr(self, column.name) for column in self.__table__.columns
-        }
+        return {column.name: getattr(self, column.name) for column in self.__table__.columns}
 
     @classmethod
     def get_batch_query(
@@ -132,9 +173,7 @@ class OutboxModel(Base):
         if status == repository.EventStatus.NOT_PRODUCED:
             values["flush_counter"] += 1
 
-        return (
-            sqlalchemy.update(cls).where(cls.id == outboxed_event_id).values(**values)
-        )
+        return sqlalchemy.update(cls).where(cls.id == outboxed_event_id).values(**values)
 
     @classmethod
     def status_sorting_case(cls) -> sqlalchemy.Case:
@@ -160,7 +199,7 @@ class SqlAlchemyOutboxedEventRepository(repository.OutboxedEventRepository):
 
     def add(
         self,
-        event: cqrs.NotificationEvent,
+        event: cqrs.INotificationEvent,
     ) -> None:
         registered_event = map.OutboxedEventMap.get(event.event_name)
         if registered_event is None:
@@ -171,14 +210,14 @@ class SqlAlchemyOutboxedEventRepository(repository.OutboxedEventRepository):
                 f"Event type {type(event)} does not match registered event type {registered_event}",
             )
 
-        bytes_payload = orjson.dumps(event.model_dump(mode="json"))
+        bytes_payload = orjson.dumps(event.to_dict())
         if self._compressor is not None:
             bytes_payload = self._compressor.compress(bytes_payload)
 
         self.session.add(
             OutboxModel(
                 event_id=event.event_id,
-                event_id_bin=func.UUID_TO_BIN(event.event_id),
+                event_id_bin=event.event_id.bytes,
                 event_name=event.event_name,
                 created_at=event.event_timestamp,
                 payload=bytes_payload,
@@ -191,17 +230,19 @@ class SqlAlchemyOutboxedEventRepository(repository.OutboxedEventRepository):
 
         event_model = map.OutboxedEventMap.get(event_dict["event_name"])
         if event_model is None:
-            return
+            return None
 
         if self._compressor is not None:
             event_dict["payload"] = self._compressor.decompress(event_dict["payload"])
-        event_dict["payload"] = orjson.loads(event_dict["payload"])
+        event_payload_dict = orjson.loads(event_dict["payload"])
 
+        # Use from_dict interface method for validation and type conversion
+        # This works through the interface without exposing implementation details
         return repository.OutboxedEvent(
             id=event_dict["id"],
             topic=event_dict["topic"],
             status=event_dict["event_status"],
-            event=event_model.model_validate(event_dict["payload"]),
+            event=event_model.from_dict(**event_payload_dict),
         )
 
     async def get_many(
@@ -210,9 +251,7 @@ class SqlAlchemyOutboxedEventRepository(repository.OutboxedEventRepository):
         topic: typing.Text | None = None,
     ) -> typing.List[repository.OutboxedEvent]:
         events: typing.Sequence[OutboxModel] = (
-            (await self.session.execute(OutboxModel.get_batch_query(batch_size, topic)))
-            .scalars()
-            .all()
+            (await self.session.execute(OutboxModel.get_batch_query(batch_size, topic))).scalars().all()
         )
 
         result = []

@@ -33,7 +33,7 @@ class OutboxRequestHandler(RequestHandler[OutboxRequest, None]):
         self.repository = repository
 
     @property
-    def events(self) -> list[events.Event]:
+    def events(self) -> typing.Sequence[events.IEvent]:
         return []
 
     async def handle(self, request: OutboxRequest) -> None:
@@ -61,9 +61,7 @@ class TestOutbox:
         request = OutboxRequest(message="test_outbox_add_3_event_positive", count=3)
         await OutboxRequestHandler(repository).handle(request)
 
-        not_produced_events: typing.List[
-            outbox_repository.OutboxedEvent
-        ] = await repository.get_many(3)
+        not_produced_events: typing.List[outbox_repository.OutboxedEvent] = await repository.get_many(3)
         await session.commit()
 
         assert len(not_produced_events) == 3
@@ -109,7 +107,7 @@ class TestOutbox:
         events_list = await repository.get_many(3)
         await repository.update_status(
             events_list[-1].id,
-            repository_protocol.EventStatus.PRODUCED,
+            repository_protocol.EventStatus.PRODUCED,  # type: ignore[arg-type]
         )
         await session.commit()
 
@@ -156,7 +154,7 @@ class TestOutbox:
         [event_over_get_all_events_method] = await repository.get_many(1)
         await repository.update_status(
             event_over_get_all_events_method.id,
-            repository_protocol.EventStatus.PRODUCED,
+            repository_protocol.EventStatus.PRODUCED,  # type: ignore[arg-type]
         )
         await session.commit()
 
@@ -180,7 +178,7 @@ class TestOutbox:
         # mark FIRST event as failure
         await repository.update_status(
             failure_event.id,
-            repository_protocol.EventStatus.NOT_PRODUCED,
+            repository_protocol.EventStatus.NOT_PRODUCED,  # type: ignore[arg-type]
         )
         await session.commit()
 
@@ -204,7 +202,7 @@ class TestOutbox:
         for _ in range(sqlalchemy.MAX_FLUSH_COUNTER_VALUE):
             await repository.update_status(
                 failure_event.id,
-                repository_protocol.EventStatus.NOT_PRODUCED,
+                repository_protocol.EventStatus.NOT_PRODUCED,  # type: ignore[arg-type]
             )
 
         await session.commit()

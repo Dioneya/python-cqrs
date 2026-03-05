@@ -16,7 +16,7 @@ class MockOutboxedEventRepository(repository.OutboxedEventRepository):
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         pass
 
-    def add(self, event: cqrs.NotificationEvent) -> None:
+    def add(self, event: cqrs.INotificationEvent) -> None:
         MockOutboxedEventRepository.COUNTER += 1
         self.session[MockOutboxedEventRepository.COUNTER] = repository.OutboxedEvent(
             id=MockOutboxedEventRepository.COUNTER,
@@ -31,9 +31,7 @@ class MockOutboxedEventRepository(repository.OutboxedEventRepository):
         topic: typing.Text | None = None,
     ) -> typing.List[repository.OutboxedEvent]:
         return list(
-            filter(lambda e: topic == e.topic, self.session.values())
-            if topic
-            else list(self.session.values()),
+            filter(lambda e: topic == e.topic, self.session.values()) if topic else list(self.session.values()),
         )
 
     async def update_status(
